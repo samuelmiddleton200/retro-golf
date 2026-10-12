@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- no zooming; the game fills the screen -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<!-- opened from the home screen: no Safari bars, black status bar -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<!-- black-translucent: the page always runs under the status bar area, so iOS has no bar-sized strip to
+     leave behind when the app opens sideways (the game already keeps clear of the notch itself) -->
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Retro Golf">
+<meta name="theme-color" content="#0c2c17">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<style>
+  html,body{overscroll-behavior:none;touch-action:manipulation;-webkit-text-size-adjust:100%}   /* no bounce, no double-tap zoom */
+  /* like an app: the page itself never moves; long menus scroll inside the game area.
+     The page is pinned to the screen (position:fixed) so it cannot sit scrolled or pushed off to one side, and its
+     height comes from --app-h, the size the script below measures, because an iPhone opened sideways sometimes
+     hands the page a stale size or offset for a moment (the "whole screen shifted over" launch). */
+  html,body{position:fixed;left:0;top:0;width:100%;height:100%;height:var(--app-h,100%);overflow:hidden}
+  #ui{height:100%;height:100dvh;height:var(--app-h,100dvh);min-height:0 !important;overflow:hidden;overscroll-behavior:none}
+  #game{height:var(--app-h,100%);bottom:auto !important}
+  /* the stats list is the only screen allowed to scroll, and only up and down */
+  #ui[data-screen="leaders"]{overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+</style>
+<script>
+  // Launch guard for the shifted screen: measure the real screen, pin the page to it, put the page back at 0,0,
+  // and if the iPhone is still reporting a stale size make it measure again. Runs at launch, a few more times in
+  // the first seconds, and whenever the app comes back, rotates or resizes. It never reloads the app.
+  (function(){
+    var root = document.documentElement, nudges = 0, last = '';
+    var ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    var standalone = function(){ return navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches); };
+    var angle = function(){ var a = (screen.orientation && typeof screen.orientation.angle === 'number') ? screen.orientation.angle : window.orientation; return typeof a === 'number' ? Math.abs(a) % 180 : null; };
+    // what the screen really is: on an iPhone home-screen app that is the whole display, turned the way the phone is held
+    function real(){
+      var w = window.innerWidth, h = window.innerHeight, a = angle();
+      if (ios && standalone() && a !== null && screen.width && screen.height) {
+        var long = Math.max(screen.width, screen.height), short = Math.min(screen.width, screen.height);
+        var ew = a === 90 ? long : short, eh = a === 90 ? short : long;
+        // only a big gap is a stale size (the page still thinks the phone is the other way up); small gaps are real bars
+        if (Math.abs(w - ew) > 60 || Math.abs(h - eh) > 60) return { w:ew, h:eh, stale:true };
+      }
+      return { w:w, h:h, stale:false };
+    }
+    function settle(){
+      try {
+        var r = real(), vv = window.visualViewport;
+        root.style.setProperty('--app-h', r.h + 'px');
+        var moved = window.scrollX || window.scrollY || root.scrollTop || (document.body && document.body.scrollTop) || (vv && (vv.offsetTop || vv.offsetLeft || vv.pageTop || vv.pageLeft));
+        if (moved) { window.scrollTo(0, 0); root.scrollTop = 0; if (document.body) document.body.scrollTop = 0; }
+        if ((r.stale || moved) && nudges < 6) {                      // make the iPhone lay the page out again
+          nudges++;
+          var m = document.querySelector('meta[name=viewport]'), c = m && m.getAttribute('content');
+          if (m) { m.setAttribute('content', c + ', height=device-height'); setTimeout(function(){ m.setAttribute('content', c); }, 60); }
+        }
+        var key = r.w + 'x' + r.h + (r.stale ? 's' : '') + (moved ? 'm' : '');
+        if (key !== last) { last = key; setTimeout(function(){ window.dispatchEvent(new Event('resize')); }, 80); }   // the game re-fits its court
+      } catch (e) {}
+    }
+    try { if ('scrollRestoration' in history) history.scrollRestoration = 'manual'; } catch (e) {}
+    settle();
+    [0, 60, 150, 300, 600, 1000, 1600, 2500, 4000].forEach(function(ms){ setTimeout(settle, ms); });
+    ['DOMContentLoaded', 'load', 'pageshow', 'resize', 'orientationchange', 'focus'].forEach(function(ev){ window.addEventListener(ev, function(){ settle(); setTimeout(settle, 250); setTimeout(settle, 700); }); });
+    document.addEventListener('visibilitychange', function(){ if (!document.hidden) { nudges = 0; settle(); setTimeout(settle, 250); setTimeout(settle, 700); } });
+    if (window.visualViewport) { visualViewport.addEventListener('resize', settle); visualViewport.addEventListener('scroll', settle); }
+  })();
+</script>
+<script>
+  // No surprise updates: the app never reloads itself. A new version (only when we publish one) shows the
+  // next time the app is closed and opened again, because the game loads fresh from the server at launch.
+  if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('sw.js', { updateViaCache:'none' }).catch(() => {}));
+</script>
+<title>Retro Golf</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600&family=Silkscreen:wght@400;700&family=Roboto+Mono:wght@500;700&display=swap">
+<style>
+:root{
+  --blue:#2c7a48; --blue-d:#236339; --blue-dd:#184a29; --navy:#0c2c17;
+  --white:#ffffff; --yellow:#ffd23f; --red:#e24b3b; --green:#7dff95;
+  --px:"Silkscreen","Courier New",monospace;
+  --numf:"Roboto Mono",ui-monospace,Consolas,monospace;
+  --body:"Pixelify Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{background:var(--blue);color:var(--white);height:100%}
+body{margin:0;font:15px/1.3 var(--body);overscroll-behavior:none;-webkit-user-select:none;user-select:none}
+button{font:inherit;color:inherit;cursor:pointer}
+.px{font-family:var(--px)}
+#ui{max-width:980px;margin:0 auto;padding:10px 16px 12px;min-height:100%}
+.bar{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;margin-bottom:8px}
+.box{border:3px solid var(--white);border-radius:6px;background:var(--blue-dd);padding:4px 10px;font-family:var(--px);font-weight:700;font-size:14px;white-space:nowrap}
+.title{font-family:var(--px);font-weight:700;font-size:clamp(18px,3.4vw,26px);text-align:center;text-transform:uppercase;line-height:1.05;text-shadow:0 3px 0 var(--navy)}
+.btn{font-family:var(--px);font-weight:700;text-transform:uppercase;border:3px solid var(--white);border-radius:6px;background:var(--blue-dd);padding:9px 14px;font-size:14px;letter-spacing:.03em;box-shadow:0 4px 0 var(--navy)}
+.btn:active{transform:translateY(3px);box-shadow:0 1px 0 var(--navy)}
+.btn.go{background:var(--yellow);color:#241a00;border-color:#fff3b8}
+.btn.red{background:var(--red)}
+.btn.sm{padding:5px 9px;font-size:12px;border-width:2px}
+.btn:disabled{opacity:.4;pointer-events:none}
+.panel{border:3px solid var(--white);border-radius:6px;background:var(--blue-d);padding:10px 12px}
+.label{font-family:var(--px);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#d8f5df}
+.row{display:flex;align-items:center;gap:10px}.between{justify-content:space-between}.grow{flex:1;min-width:0}
+.muted{color:#d8f5df}.yellow{color:var(--yellow)}.good{color:var(--green)}.bad{color:#ffb3aa}
+/* numbers use a plain monospace: the pixel fonts' 5 reads as S */
+.num{font-family:var(--numf);font-variant-numeric:tabular-nums;font-weight:700}
+.two{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:12px}
+.menu{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-content:start}
+.menu .btn{padding:14px 6px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{font-family:var(--px);font-size:10px;text-transform:uppercase;color:#d8f5df;text-align:right;padding:1px 6px}
+td{padding:2px 6px;text-align:right;border-top:1px solid rgba(255,255,255,.15)}
+td.tl,th.tl{text-align:left}
+tr.me td{color:var(--yellow)}
+tr.cut td{border-top:2px dashed var(--yellow)}
+.scroll{max-height:calc(var(--app-h,100vh) - 96px);overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.shop{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.shop .panel{padding:8px;display:grid;gap:5px;align-content:start}
+.shop .nm{font-family:var(--px);font-size:12px}
+.pips{display:flex;gap:3px}.pips i{flex:1;height:8px;background:var(--navy);border-radius:2px}.pips i.on{background:var(--yellow)}
+.fine{font-family:var(--numf);font-size:11px;line-height:1.25;color:#d8f5df}
+.toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#000c;border:2px solid #fff;border-radius:6px;padding:6px 12px;font-family:var(--px);font-size:12px;z-index:200}
+
+/* the course */
+#game{position:fixed;inset:0;background:#0c2c17;z-index:30;display:flex;align-items:center;justify-content:center}
+.stage{position:relative;touch-action:none}
+#cv{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
+.hud{position:absolute;left:6px;right:6px;top:5px;display:flex;justify-content:space-between;gap:6px;pointer-events:none;font-family:var(--px);font-size:12px}
+.hud .hb{background:#0c2c17cc;border:2px solid #fff;border-radius:5px;padding:2px 8px}
+.hud .hb b{font-family:var(--numf)}
+.ctl{position:absolute;left:6px;right:6px;bottom:6px;display:flex;align-items:flex-end;justify-content:space-between;gap:8px;pointer-events:none}
+.ctl > *{pointer-events:auto}
+.clubs{display:flex;align-items:center;gap:5px;background:#0c2c17cc;border:2px solid #fff;border-radius:6px;padding:4px 6px}
+.clubs .cn{min-width:92px;text-align:center;font-family:var(--px);font-size:12px;line-height:1.15}
+.clubs .cn b{display:block;font-family:var(--numf);font-size:13px;color:var(--yellow)}
+.lie{font-family:var(--px);font-size:11px;background:#0c2c17cc;border:2px solid #fff;border-radius:5px;padding:2px 8px;align-self:center}
+/* the swing: a marker runs back and forth, the bright band in the middle is the sweet spot (user: one tap) */
+.swing{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);width:min(70%,460px);pointer-events:none}
+.swing .track{position:relative;height:22px;border:3px solid #fff;border-radius:6px;background:linear-gradient(90deg,#e24b3b,#f0a020 30%,#3a8f4a 46%,#3a8f4a 54%,#f0a020 70%,#e24b3b);overflow:hidden}
+.swing .sweet{position:absolute;top:0;bottom:0;left:50%;transform:translateX(-50%);background:#7dff95}
+.swing .mark{position:absolute;top:-3px;bottom:-3px;width:5px;margin-left:-2.5px;background:#fff;box-shadow:0 0 0 2px #000}
+.swing .say{text-align:center;font-family:var(--px);font-size:13px;margin-bottom:4px;text-shadow:2px 2px 0 #000;color:#4db8ff}
+.banner{position:absolute;left:0;right:0;top:34%;text-align:center;font-family:var(--px);font-weight:700;font-size:26px;text-shadow:3px 3px 0 #000;pointer-events:none}
+.banner small{display:block;font-size:13px;color:var(--yellow)}
+#rotate{display:none;position:fixed;inset:0;z-index:100;background:var(--blue);align-items:center;justify-content:center;text-align:center;padding:24px}
+@media (orientation:portrait) and (max-width:700px){ #rotate{display:flex} }
+@media (max-height:420px){ #ui{padding:6px 12px 8px} .menu .btn{padding:10px 6px} .panel{padding:7px 10px} }
+</style>
+
+<div id="ui"></div>
+
+<div id="game" hidden>
+  <div class="stage" id="stage">
+    <canvas id="cv" width="440" height="216"></canvas>
+    <div class="hud"><div class="hb" id="hInfo"></div><div class="hb" id="hScore"></div></div>
+    <div class="ctl" id="ctl">
+      <div class="clubs"><button class="btn sm" id="cPrev">&lsaquo;</button><div class="cn" id="cName"></div><button class="btn sm" id="cNext">&rsaquo;</button></div>
+      <div class="lie" id="lie"></div>
+      <button class="btn go" id="swingBtn">Swing</button>
+    </div>
+    <div class="swing" id="swing" hidden><div class="say" id="swingSay">Tap anywhere</div><div class="track"><div class="sweet" id="sweet"></div><div class="mark" id="mark"></div></div></div>
+    <div class="banner" id="banner" hidden></div>
+  </div>
+</div>
+
+<div id="rotate"><div><div class="px" style="font-size:22px">Turn your phone sideways</div><div class="muted">Retro Golf plays in landscape.</div></div></div>
+
+<script>
+(() => {
+'use strict';
+/* ============================ Retro Golf ============================
+   You are one golfer going up the tours (user's design, 2026-10-12): high school, college, a mini tour, the pro tour
+   and then the four majors. Rounds are 3 holes early, 6 on the mini tour, 9 on the pro tour and in the majors.
+   A shot: pick a club (each has one fixed distance), drag to aim, press Swing, then ONE tap on a marker that runs
+   back and forth across a bar. Dead centre is straight and full; off centre leaks left or right and loses distance.
+   The hole is seen from above. On the green the view closes in, arrows show the slope, and you pull back and let go
+   to putt (how far you pull is the pace). Prize money buys better clubs: that is the only upgrade.
+   Distances are metres. */
+const $ = s => document.querySelector(s);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const rnd = (a, b) => a + Math.random() * (b - a);
+const ri = (a, b) => Math.floor(rnd(a, b + 1));
+const pick = a => a[Math.floor(Math.random() * a.length)];
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
+const ordinal = n => n + (['th', 'st', 'nd', 'rd'][n % 100 > 10 && n % 100 < 14 ? 0 : n % 10] || 'th');
+const money = n => '$' + Math.round(n).toLocaleString('en-US');
+const toPar = d => d === 0 ? 'E' : d > 0 ? '+' + d : String(d);
+const gauss = () => { let u = 0; for (let i = 0; i < 6; i++) u += Math.random(); return (u - 3) / .7071; };   // about a standard normal
+
+/* ---- the tours ----
+   holes: the round; events: tournaments in a season; field: golfers in each; over: what an average golfer there shoots
+   per hole against par; purse: the winner's cheque (everyone gets something). Top 3 in the season's points move up;
+   on the pro tour the top 5 play the four majors, then a new pro season starts. */
+const TOURS = [
+  { key:'hs', name:'High School', holes:3, events:4, field:10, over:.9, purse:150, up:3 },
+  { key:'col', name:'College', holes:3, events:5, field:12, over:.5, purse:400, up:3 },
+  { key:'mini', name:'Mini Tour', holes:6, events:5, field:16, over:.2, purse:1500, up:3 },
+  { key:'pro', name:'Pro Tour', holes:9, events:6, field:20, over:-.05, purse:7000, up:5 },
+  { key:'major', name:'The Majors', holes:9, events:4, field:24, over:-.15, purse:25000, up:0 },
+];
+const MAJORS = ['The Azalea Invitational', 'The National Open', 'The Links Championship', 'The Tour Championship'];
+const PAYOUT = [1, .6, .4, .3, .22, .17, .13, .1, .08, .06];              // share of the purse by place; the rest get 4%
+const PARS = { 3:[4, 3, 5], 6:[4, 3, 5, 4, 3, 4], 9:[4, 4, 3, 5, 4, 3, 4, 5, 4] };
+const NAMES = ['Hale', 'Okafor', 'Lindqvist', 'Moreno', 'Tanaka', 'Brooks', 'Castellano', 'Whitfield', 'Dube', 'Park', 'Russo', 'Novak', 'Sinclair', 'Abara', 'Keane', 'Marsh',
+  'Delacroix', 'Yoon', 'Fitzgerald', 'Okoye', 'Bauer', 'Santos', 'Graves', 'Ilves', 'Mbeki', 'Calloway', 'Reyes', 'Stone', 'Varga', 'Quinn'];
+
+/* ---- clubs ----
+   d: how far it flies with a clean hit off a good lie; cat: which set it belongs to (that is what the shop sells);
+   fast: how quick the swing marker runs (longer clubs are harder to time); wild: degrees off line at the worst timing. */
+const CLUBS = [
+  { n:'Driver', d:210, cat:'driver', fast:1.25, wild:22, roll:.12 },
+  { n:'3 Wood', d:190, cat:'wood', fast:1.15, wild:20, roll:.1 },
+  { n:'4 Iron', d:170, cat:'iron', fast:1.05, wild:17, roll:.07 },
+  { n:'6 Iron', d:150, cat:'iron', fast:1, wild:16, roll:.06 },
+  { n:'8 Iron', d:130, cat:'iron', fast:.95, wild:15, roll:.05 },
+  { n:'9 Iron', d:112, cat:'iron', fast:.92, wild:14, roll:.05 },
+  { n:'Pitching Wedge', d:95, cat:'wedge', fast:.88, wild:13, roll:.04 },
+  { n:'Gap Wedge', d:75, cat:'wedge', fast:.84, wild:12, roll:.04 },
+  { n:'Sand Wedge', d:55, cat:'wedge', fast:.8, wild:12, roll:.03 },
+  { n:'Lob Wedge', d:38, cat:'wedge', fast:.76, wild:11, roll:.03 },
+  { n:'Chip', d:20, cat:'wedge', fast:.7, wild:10, roll:.12 },
+];
+// the shop: five sets, each bought up a level at a time. What a level does is in `what`.
+const SETS = [
+  { key:'driver', name:'Driver', what:'+4% distance and a slower marker each level', price:[0, 250, 1000, 4500, 18000] },
+  { key:'wood', name:'Woods', what:'+4% distance and a slower marker each level', price:[0, 200, 800, 3500, 14000] },
+  { key:'iron', name:'Irons', what:'A wider sweet spot, +2% distance each level', price:[0, 300, 1200, 5000, 20000] },
+  { key:'wedge', name:'Wedges', what:'A wider sweet spot; less lost from sand and rough', price:[0, 250, 1000, 4000, 16000] },
+  { key:'putter', name:'Putter', what:'Starts truer and the hole takes more pace', price:[0, 250, 1000, 4500, 18000] },
+];
+const TIER_NAME = ['', 'Starter', 'Club', 'Tour', 'Pro', 'Major'];
+const lv = cat => G.gear[cat] || 1;
+const clubDist = c => c.d * (c.cat === 'driver' || c.cat === 'wood' ? 1 + .04 * (lv(c.cat) - 1) : c.cat === 'iron' ? 1 + .02 * (lv(c.cat) - 1) : 1);
+const sweetOf = c => (c.cat === 'iron' || c.cat === 'wedge' ? .07 + .02 * (lv(c.cat) - 1) : .06 + .012 * (lv(c.cat) - 1));
+// what the lie takes off the distance, and how much harder it makes the timing
+const LIE = { tee:{ name:'Tee', d:1, fast:1 }, fair:{ name:'Fairway', d:1, fast:1 }, fringe:{ name:'Fringe', d:1, fast:1 }, rough:{ name:'Rough', d:.88, fast:1.2 }, sand:{ name:'Sand', d:.72, fast:1.4 }, green:{ name:'Green', d:1, fast:1 } };
+const lieDist = (c, lie) => { const L = LIE[lie]; if (L.d === 1) return 1; const soft = c.cat === 'wedge' ? .5 + .1 * (lv('wedge') - 1) : 0; return L.d + (1 - L.d) * clamp(soft, 0, .9); };
+
+/* ============================ career ============================ */
+const KEY = 'retrogolf.v1';
+let G = null;
+function newCareer(){
+  G = { v:1, tour:0, season:1, event:0, money:0, gear:{ driver:1, wood:1, iron:1, wedge:1, putter:1 }, field:[], pts:0, wins:0, majors:0, best:{}, last:null };
+  buildField();
+}
+// the golfers you play against all season: a name, how good (strokes per hole better or worse than the tour's average) and season points
+function buildField(){
+  const T = TOURS[G.tour], names = [...NAMES].sort(() => Math.random() - .5).slice(0, T.field - 1);
+  G.field = names.map(n => ({ n, skill:rnd(-.22, .22), pts:0 })); G.pts = 0; G.event = 0;
+}
+function save(){ try { localStorage.setItem(KEY, JSON.stringify(G)); } catch {} }
+function load(){ try { const g = JSON.parse(localStorage.getItem(KEY)); if (g && g.gear) { G = g; return true; } } catch {} return false; }
+const tour = () => TOURS[G.tour];
+const eventName = () => G.tour === 4 ? MAJORS[G.event] : `${tour().name} event ${G.event + 1} of ${tour().events}`;
+const standings = () => [{ n:'You', pts:G.pts, me:true }, ...G.field].sort((a, b) => b.pts - a.pts || (b.me ? 1 : 0) - (a.me ? 1 : 0));
+// a round has been played: everyone else's scores, the leaderboard, the cheque, the season points
+function finishEvent(strokes, par){
+  const T = tour(), holes = T.holes;
+  const rows = G.field.map(o => { let s = 0; for (let h = 0; h < holes; h++) s += Math.max(-2, Math.round(T.over + o.skill + gauss() * .78)); return { o, n:o.n, d:s }; });
+  rows.push({ n:'You', d:strokes - par, me:true });
+  rows.sort((a, b) => a.d - b.d || (a.me ? -1 : 1));                     // you win ties: no playoffs yet
+  rows.forEach((r, i) => { r.place = i + 1; r.pts = T.field - i + (i === 0 ? 3 : 0); r.cash = T.purse * (PAYOUT[i] ?? .04); if (r.o) r.o.pts += r.pts; });
+  const mine = rows.find(r => r.me);
+  G.money += mine.cash; G.pts += mine.pts;
+  if (mine.place === 1) { G.wins++; if (G.tour === 4) G.majors++; }
+  if (G.best[T.key] == null || mine.d < G.best[T.key]) G.best[T.key] = mine.d;
+  G.event++;
+  const sum = { title:eventName0, rows:rows.slice(0, 8).concat(mine.place > 8 ? [mine] : []), place:mine.place, cash:mine.cash, d:mine.d, strokes, next:'' };
+  if (G.event >= T.events) {                                           // the season is over
+    const rank = standings().findIndex(r => r.me) + 1;
+    if (G.tour === 4) { sum.next = `The majors are done for the year${G.majors ? `: you have ${G.majors} major${G.majors === 1 ? '' : 's'}` : ''}. Back to the Pro Tour.`; G.tour = 3; }
+    else if (rank <= T.up) { G.tour++; sum.next = G.tour === 4 ? `${ordinal(rank)} in the season: you are in the four majors.` : `${ordinal(rank)} in the season: you move up to the ${TOURS[G.tour].name}.`; }
+    else sum.next = `${ordinal(rank)} in the season. The top ${T.up} move up: another year on the ${T.name}.`;
+    G.season++; buildField();
+  }
+  G.last = sum; save();
+}
+let eventName0 = '';
+
+/* ============================ screens ============================ */
+let screen = 'hub';
+function render(){
+  const ui = $('#ui');
+  if (!G) { ui.innerHTML = `<div class="title" style="margin:40px 0 14px">Retro Golf</div><div style="text-align:center"><div class="muted" style="margin-bottom:14px">One golfer, from the high school team to the majors.</div><button class="btn go" data-a="new">Start career</button></div>`; return; }
+  ui.innerHTML = (G.last && !G.last.seen ? boardHTML : { shop:shopHTML, table:tableHTML }[screen] || hubHTML)();
+}
+const topBar = (title, right = '') => `<div class="bar"><div class="box num">${money(G.money)}</div><div class="title">${title}</div><div class="row" style="gap:6px">${right}</div></div>`;
+const backBtn = `<button class="btn sm" data-a="go" data-s="hub">Back</button>`;
+function hubHTML(){
+  const T = tour(), st = standings(), rank = st.findIndex(r => r.me) + 1;
+  return topBar('Retro Golf', `<div class="box">${esc(T.name)}</div>`) + `<div class="two">
+    <div class="panel"><div class="label">Season ${G.season}</div>
+      <div class="px" style="font-size:18px;margin:4px 0 2px">${esc(eventName())}</div>
+      <div class="muted" style="font-size:13px">${T.holes} holes, ${T.field} golfers, ${money(T.purse)} to the winner</div>
+      <div style="font-size:13px;margin:6px 0 10px">${G.tour === 4 ? `${G.majors} major${G.majors === 1 ? '' : 's'} won` : `${ordinal(rank)} of ${st.length} in the season points. Top ${T.up} ${G.tour === 3 ? 'play the majors' : 'move up'}.`}</div>
+      <button class="btn go" style="width:100%" data-a="play">Tee off</button></div>
+    <div class="menu">
+      <button class="btn" data-a="go" data-s="shop">Clubs</button>
+      <button class="btn" data-a="go" data-s="table">Standings</button>
+      <div class="panel" style="grid-column:1 / -1"><div class="label">Career</div><div class="fine">${G.wins} win${G.wins === 1 ? '' : 's'}, ${G.majors} major${G.majors === 1 ? '' : 's'}. Best round here: ${G.best[T.key] == null ? '-' : toPar(G.best[T.key])}</div>
+        <button class="btn sm red" style="margin-top:6px" data-a="reset">Reset career</button></div>
+    </div></div>`;
+}
+function shopHTML(){
+  const cards = SETS.map(s => { const l = lv(s.key), cost = s.price[l], max = l >= 5;
+    return `<div class="panel"><div class="nm">${s.name}</div><div class="pips">${[1, 2, 3, 4, 5].map(i => `<i class="${i <= l ? 'on' : ''}"></i>`).join('')}</div>
+      <div class="fine">${TIER_NAME[l]}${max ? '' : ' &rarr; ' + TIER_NAME[l + 1]}</div><div class="fine">${s.what}</div>
+      <button class="btn sm ${max ? '' : 'go'}" data-a="buy" data-k="${s.key}" ${max || G.money < cost ? 'disabled' : ''}>${max ? 'Best' : money(cost)}</button></div>`; }).join('');
+  return topBar('Clubs', backBtn) + `<div class="shop">${cards}</div><div class="fine" style="margin-top:8px">Clubs are the only upgrade: prize money buys them. Your swing is all you.</div>`;
+}
+function tableHTML(){
+  const T = tour(), rows = standings().map((r, i) => `<tr class="${r.me ? 'me' : ''} ${i === T.up && T.up ? 'cut' : ''}"><td class="num">${i + 1}</td><td class="tl">${esc(r.n)}</td><td class="num">${r.pts}</td></tr>`).join('');
+  return topBar('Standings', backBtn) + `<div class="panel scroll"><table><tr><th>#</th><th class="tl">Golfer</th><th>Points</th></tr>${rows}</table></div>`;
+}
+function boardHTML(){
+  const L = G.last, rows = L.rows.map(r => `<tr class="${r.me ? 'me' : ''}"><td class="num">${r.place}</td><td class="tl">${esc(r.n)}</td><td class="num">${toPar(r.d)}</td><td class="num">${money(r.cash)}</td></tr>`).join('');
+  return `<div class="bar"><span></span><div class="title">${esc(L.title)}</div><span></span></div><div class="two">
+    <div class="panel scroll"><table><tr><th>#</th><th class="tl">Golfer</th><th>Score</th><th>Prize</th></tr>${rows}</table></div>
+    <div class="panel" style="display:grid;gap:8px;align-content:start"><div class="px" style="font-size:22px">${ordinal(L.place)} <span class="num">${toPar(L.d)}</span></div>
+      <div class="yellow num">+${money(L.cash)}</div>${L.next ? `<div style="font-size:14px">${esc(L.next)}</div>` : ''}
+      <button class="btn go" data-a="ok">Continue</button></div></div>`;
+}
+let toastT;
+function toast(m){ document.querySelector('.toast')?.remove(); clearTimeout(toastT); const e = document.createElement('div'); e.className = 'toast'; e.textContent = m; document.body.append(e); toastT = setTimeout(() => e.remove(), 2200); }
+const ACT = {
+  new:() => { newCareer(); save(); render(); },
+  go:d => { screen = d.s; render(); },
+  reset:() => { if (confirm('Erase this career?')) { G = null; try { localStorage.removeItem(KEY); } catch {} render(); } },
+  buy:d => { const s = SETS.find(x => x.key === d.k), l = lv(s.key), cost = s.price[l]; if (l >= 5 || G.money < cost) return; G.money -= cost; G.gear[s.key] = l + 1; save(); render(); toast(`${s.name}: ${TIER_NAME[l + 1]}`); },
+  play:() => startRound(),
+  ok:() => { G.last.seen = true; save(); screen = 'hub'; render(); },
+};
+document.addEventListener('click', e => { const b = e.target.closest('[data-a]'); if (!b || b.disabled) return; ACT[b.dataset.a]?.(b.dataset); });
+
+/* ============================ a hole ============================
+   Laid out left to right in a strip WH metres tall: the tee on the left, the green on the right, a fairway that bends
+   through one or two points between them (none on a par 3), bunkers by the green and by the landing area, sometimes
+   a pond. Everything else is rough; off the strip is out of bounds. */
+const WH = 150;
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+function genHole(par){
+  const len = par === 3 ? rnd(115, 172) : par === 4 ? rnd(270, 355) : rnd(410, 480);
+  const tee = { x:32, y:WH / 2 + rnd(-28, 28) };
+  const gy = clamp(tee.y + rnd(-45, 45), 34, WH - 34), gx = tee.x + Math.sqrt(Math.max(1, len * len - (gy - tee.y) ** 2));
+  const green = { x:gx, y:gy, rx:rnd(13, 17), ry:rnd(10.5, 13.5) };
+  const a = rnd(0, Math.PI * 2), r = rnd(0, .55);
+  const pin = { x:gx + Math.cos(a) * green.rx * r, y:gy + Math.sin(a) * green.ry * r };
+  const sa = rnd(0, Math.PI * 2), sm = rnd(.25, .8);                     // the green tilts one way: downhill direction and how much
+  const H = { par, W:gx + 42, tee, green, pin, slope:{ x:Math.cos(sa) * sm, y:Math.sin(sa) * sm, m:sm }, path:[], fw:0, sand:[], water:[], trees:[] };
+  if (par > 3) {
+    H.fw = rnd(26, 34);
+    const n = par === 4 ? 1 : 2, pts = [{ x:tee.x + 55, y:tee.y }];
+    for (let i = 1; i <= n; i++) { const t = i / (n + 1); pts.push({ x:tee.x + (gx - tee.x) * t, y:clamp(tee.y + (gy - tee.y) * t + rnd(-30, 30), 30, WH - 30) }); }
+    pts.push({ x:gx - green.rx - 4, y:gy }); H.path = pts;
+    // a bunker beside the fairway about where a drive lands
+    const at = pointAlong(pts, clamp(rnd(150, 200), 0, 1e9)), side = pick([-1, 1]);
+    H.sand.push({ x:at.x + rnd(-10, 10), y:clamp(at.y + side * (H.fw / 2 + rnd(2, 8)), 12, WH - 12), rx:rnd(7, 11), ry:rnd(5, 7) });
+  }
+  for (let i = 0, n = ri(1, 3); i < n; i++) { const b = rnd(0, Math.PI * 2), d = rnd(1.25, 1.6); H.sand.push({ x:gx + Math.cos(b) * green.rx * d, y:gy + Math.sin(b) * green.ry * d, rx:rnd(5, 8), ry:rnd(4, 6) }); }
+  if (Math.random() < .55) {                                            // a pond: beside the fairway, or short of the green on a par 3
+    const t = par === 3 ? rnd(.4, .65) : rnd(.45, .8), px = tee.x + (gx - tee.x) * t, base = par === 3 ? tee.y + (gy - tee.y) * t : pointAlong(H.path, (gx - tee.x) * t - 55).y;
+    const off = par === 3 ? rnd(-10, 10) : pick([-1, 1]) * (H.fw / 2 + rnd(12, 20));
+    const w = { x:px, y:clamp(base + off, 14, WH - 14), rx:rnd(14, 24), ry:rnd(9, 14) };
+    if (dist(w, green) > green.rx + w.rx + 8 && dist(w, tee) > 45) H.water.push(w);
+  }
+  for (let i = 0; i < 46; i++) { const p = { x:rnd(0, H.W), y:Math.random() < .5 ? rnd(2, 16) : rnd(WH - 16, WH - 2), r:rnd(3, 5.5) }; H.trees.push(p); }
+  H.len = Math.round(dist(tee, pin));
+  return H;
+}
+function pointAlong(pts, d){
+  for (let i = 0; i < pts.length - 1; i++) { const L = dist(pts[i], pts[i + 1]); if (d <= L) return { x:pts[i].x + (pts[i + 1].x - pts[i].x) * d / L, y:pts[i].y + (pts[i + 1].y - pts[i].y) * d / L }; d -= L; }
+  return pts[pts.length - 1] || { x:0, y:WH / 2 };
+}
+const inEll = (p, e, k = 1) => ((p.x - e.x) / (e.rx * k)) ** 2 + ((p.y - e.y) / (e.ry * k)) ** 2 <= 1;
+function segDist(p, a, b){ const dx = b.x - a.x, dy = b.y - a.y, t = clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1), 0, 1); return Math.hypot(p.x - a.x - dx * t, p.y - a.y - dy * t); }
+// what the ball is sitting on at p
+function lieAt(H, p){
+  if (p.x < 0 || p.x > H.W || p.y < 0 || p.y > WH) return 'ob';
+  if (H.water.some(w => inEll(p, w))) return 'water';
+  if (inEll(p, H.green)) return 'green';
+  if (H.sand.some(s => inEll(p, s))) return 'sand';
+  if (inEll(p, H.green, 1.28)) return 'fringe';
+  if (dist(p, H.tee) < 5) return 'tee';
+  for (let i = 0; i < H.path.length - 1; i++) if (segDist(p, H.path[i], H.path[i + 1]) < H.fw / 2) return 'fair';
+  return 'rough';
+}
+
+/* ============================ playing ============================ */
+const cv = $('#cv'), ctx = cv.getContext('2d');
+let CW = 440; const CH = 216;
+let P = null, raf = 0, lastT = 0;
+function fit(){
+  const aw = innerWidth, ah = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--app-h')) || innerHeight;
+  CW = clamp(Math.round(CH * aw / ah), 380, 520);
+  if (cv.width !== CW) { cv.width = CW; cv.height = CH; }
+  const s = Math.min(aw / CW, ah / CH);
+  cv.style.width = Math.floor(CW * s) + 'px'; cv.style.height = Math.floor(CH * s) + 'px';
+  if (P) P.px = s;                                                     // screen pixels per canvas pixel
+}
+addEventListener('resize', () => { if (P) fit(); });
+function startRound(){
+  const T = tour();
+  eventName0 = eventName();
+  P = { pars:PARS[T.holes], hi:0, total:0, parSum:0, cam:null, px:1 };
+  $('#game').hidden = false; fit(); startHole();
+  lastT = performance.now(); cancelAnimationFrame(raf); raf = requestAnimationFrame(loop);
+}
+function startHole(){
+  const par = P.pars[P.hi], H = genHole(par);
+  Object.assign(P, { H, ball:{ ...H.tee }, lie:'tee', strokes:0, mode:'aim', aim:0, club:0, fly:null, putt:null, msg:null, wait:0, drag:null });
+  setupShot();
+}
+// the ball has stopped: what next
+function setupShot(){
+  const H = P.H;
+  P.lie = lieAt(H, P.ball);
+  if (P.lie === 'green') { P.mode = 'putt'; P.drag = null; }
+  else {
+    P.mode = 'aim';
+    const d = dist(P.ball, H.pin);
+    // the longest club that does not fly past the pin from this lie (the shortest if they all do)
+    let c = CLUBS.length - 1; for (let i = 0; i < CLUBS.length; i++) if (clubDist(CLUBS[i]) * lieDist(CLUBS[i], P.lie) <= d * 1.04) { c = i; break; }
+    if (P.lie !== 'tee' && c === 0) c = 1;                              // no driver off the deck
+    if (P.lie === 'sand') c = Math.max(c, 6);
+    P.club = c;
+    // aim at the pin; on a long hole, at the fairway about as far on as this club goes
+    let target = H.pin;
+    if (H.path.length && d > clubDist(CLUBS[c]) * 1.25) { let best = null; for (let s = 0; s <= 60; s++) { const q = pointAlong(H.path, s * 8); if (q.x > P.ball.x + 20 && Math.abs(dist(P.ball, q) - clubDist(CLUBS[c])) < 12 && (!best || q.x > best.x)) best = q; } if (best) target = best; }
+    P.aim = Math.atan2(target.y - P.ball.y, target.x - P.ball.x);
+  }
+  hud();
+}
+const club = () => CLUBS[P.club];
+const carry = () => clubDist(club()) * lieDist(club(), P.lie);
+function hud(){
+  const H = P.H, d = dist(P.ball, H.pin);
+  $('#hInfo').innerHTML = `Hole ${P.hi + 1}/${P.pars.length} &middot; Par ${H.par} &middot; <b>${H.len}</b> m`;
+  $('#hScore').innerHTML = `Shot <b>${P.strokes + 1}</b> &middot; ${P.mode === 'putt' ? `<b>${d.toFixed(1)}</b> m putt` : `<b>${Math.round(d)}</b> m to pin`} &middot; <b>${toPar(P.total - P.parSum)}</b>`;
+  const aim = P.mode === 'aim';
+  $('#ctl').hidden = !aim; $('#swing').hidden = P.mode !== 'bar';
+  if (aim) { $('#cName').innerHTML = `${club().n}<b>${Math.round(carry())} m</b>`; $('#lie').textContent = LIE[P.lie].name; }
+  if (P.mode === 'bar') $('#sweet').style.width = (sweetOf(club()) * 100) + '%';
+}
+function banner(text, small = ''){ const b = $('#banner'); if (!text) { b.hidden = true; return; } b.hidden = false; b.innerHTML = esc(text) + (small ? `<small>${esc(small)}</small>` : ''); }
+const tri = x => { x = ((x % 2) + 2) % 2; return x < 1 ? -1 + 2 * x : 3 - 2 * x; };   // -1..1..-1, the marker's sweep
+// the swing: e is where the marker was, -1 to 1. Inside the sweet spot it is a clean hit.
+function hit(e){
+  const c = club(), w = sweetOf(c), off = Math.max(0, Math.abs(e) - w) / (1 - w);
+  const ang = P.aim + (Math.sign(e) * off * c.wild + rnd(-.6, .6)) * Math.PI / 180;
+  const far = carry() * (1 - .38 * off * off) * rnd(.985, 1.015);
+  const land = { x:P.ball.x + Math.cos(ang) * far, y:P.ball.y + Math.sin(ang) * far };
+  const on = lieAt(P.H, land), rollK = on === 'fair' || on === 'fringe' ? c.roll : on === 'green' ? c.roll * .7 : on === 'rough' ? c.roll * .3 : 0;
+  const end = { x:land.x + Math.cos(ang) * far * rollK, y:land.y + Math.sin(ang) * far * rollK };
+  P.strokes++; P.mode = 'fly';
+  P.fly = { from:{ ...P.ball }, land, end, t:0, T:.5 + far / 130, roll:.25 + far * rollK / 14, peak:Math.min(26, far * .16) * (c.n === 'Chip' ? .35 : 1) };
+  P.say = off === 0 ? 'Pure!' : off < .25 ? 'Good' : off < .6 ? (e < 0 ? 'Pulled' : 'Pushed') : (e < 0 ? 'Hooked' : 'Sliced');
+  P.sayT = 1.1; hud();
+}
+function landed(){
+  const H = P.H, at = lieAt(H, P.fly.end), mid = lieAt(H, P.fly.land);
+  if (at === 'water' || mid === 'water' || at === 'ob') {                 // a stroke, and back where you were
+    P.strokes++; P.ball = { ...P.fly.from }; P.msg = { text:at === 'ob' ? 'Out of bounds' : 'Water', small:'one stroke: play it again', t:1.5 };
+  } else P.ball = { ...P.fly.end };
+  P.fly = null; afterStroke();
+}
+function afterStroke(){
+  const H = P.H;
+  if (P.strokes >= H.par + 5) return holeDone(P.strokes, 'Picked up');
+  setupShot();
+}
+function holeDone(n, word){
+  const H = P.H, d = n - H.par;
+  P.total += n; P.parSum += H.par; P.mode = 'done';
+  const name = word || (n === 1 ? 'Hole in one!' : d <= -2 ? 'Eagle!' : d === -1 ? 'Birdie!' : d === 0 ? 'Par' : d === 1 ? 'Bogey' : d === 2 ? 'Double bogey' : `+${d}`);
+  P.msg = { text:name, small:`${n} on a par ${H.par} · ${toPar(P.total - P.parSum)} for the round`, t:2.2, then:() => { P.hi++; if (P.hi < P.pars.length) startHole(); else endRound(); } };
+  hud();
+}
+function endRound(){
+  cancelAnimationFrame(raf); $('#game').hidden = true; banner('');
+  const s = P.total, par = P.parSum; P = null;
+  finishEvent(s, par); render();
+}
+/* ---- putting: pull back and let go (user). The pull is the pace, the opposite of the pull is the line.
+   The ball slows at a steady rate and the green's tilt pushes it sideways all the way, more as it slows. ---- */
+const FRICTION = 1.4, TILT = .3, PULL = .11, MAXPUTT = 32;              // m/s2, m/s2 at full slope, metres of putt per screen pixel pulled, longest putt
+function putt(dir, d){
+  const j = (1.3 - .26 * (lv('putter') - 1)) * Math.PI / 180, a = dir + rnd(-j, j), v = Math.sqrt(2 * FRICTION * d);
+  P.strokes++; P.mode = 'roll'; P.putt = { vx:Math.cos(a) * v, vy:Math.sin(a) * v }; hud();
+}
+function rollStep(dt){
+  const H = P.H, b = P.ball, q = P.putt, sp = Math.hypot(q.vx, q.vy);
+  const cup = .34 + .04 * (lv('putter') - 1), take = 2.3 + .2 * (lv('putter') - 1);
+  if (dist(b, H.pin) < cup && sp < take) { P.ball = { ...H.pin }; P.putt = null; return holeDone(P.strokes); }
+  if (sp < .06) { P.putt = null; return lieAt(H, b) === 'water' ? (P.strokes++, P.ball = { ...H.green }, afterStroke()) : afterStroke(); }
+  const on = lieAt(H, b), fr = FRICTION * (on === 'green' ? 1 : on === 'fringe' ? 1.8 : 4);
+  q.vx += (-q.vx / sp * fr + H.slope.x * TILT) * dt; q.vy += (-q.vy / sp * fr + H.slope.y * TILT) * dt;
+  if (q.vx * Math.cos(Math.atan2(q.vy, q.vx)) + q.vy * Math.sin(Math.atan2(q.vy, q.vx)) < .05 && sp < .25) { q.vx = q.vy = 0; }
+  b.x += q.vx * dt; b.y += q.vy * dt;
+}
+
+/* ---- the camera: fits the ball and the pin (and where the shot would land) with room round them; on the green it
+   closes in on the green ---- */
+function wantView(){
+  const H = P.H;
+  if (P.mode === 'putt' || P.mode === 'roll' || (P.mode === 'done' && P.lie === 'green')) return { x:H.green.x, y:H.green.y, k:Math.min(CW / (H.green.rx * 2 + 12), (CH - 30) / (H.green.ry * 2 + 10)) };
+  const pts = [P.ball, H.pin]; if (P.fly) pts.push(P.fly.from, P.fly.end);
+  if (P.mode === 'aim' || P.mode === 'bar') pts.push({ x:P.ball.x + Math.cos(P.aim) * carry(), y:P.ball.y + Math.sin(P.aim) * carry() });
+  const x0 = Math.min(...pts.map(p => p.x)) - 28, x1 = Math.max(...pts.map(p => p.x)) + 28, y0 = Math.min(...pts.map(p => p.y)) - 26, y1 = Math.max(...pts.map(p => p.y)) + 26;
+  const k = clamp(Math.min(CW / (x1 - x0), (CH - 44) / (y1 - y0)), .7, 5);
+  return { x:(x0 + x1) / 2, y:(y0 + y1) / 2 + 6 / k, k };
+}
+const sx = x => (x - P.cam.x) * P.cam.k + CW / 2, sy = y => (y - P.cam.y) * P.cam.k + CH / 2;
+function ell(e, col, k = 1){ ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(sx(e.x), sy(e.y), e.rx * k * P.cam.k, e.ry * k * P.cam.k, 0, 0, 7); ctx.fill(); }
+function draw(){
+  const H = P.H, c = P.cam, k = c.k;
+  ctx.fillStyle = '#17512b'; ctx.fillRect(0, 0, CW, CH);                // off the course
+  ctx.fillStyle = '#2f8a3e'; ctx.fillRect(sx(0), sy(0), H.W * k, WH * k);   // rough
+  for (let x = 0; x < H.W; x += 24) { ctx.fillStyle = 'rgba(255,255,255,.035)'; ctx.fillRect(sx(x), sy(0), 12 * k, WH * k); }
+  if (H.path.length) { ctx.strokeStyle = '#57b85c'; ctx.lineWidth = H.fw * k; ctx.lineCap = ctx.lineJoin = 'round'; ctx.beginPath(); H.path.forEach((p, i) => i ? ctx.lineTo(sx(p.x), sy(p.y)) : ctx.moveTo(sx(p.x), sy(p.y))); ctx.stroke(); }
+  H.water.forEach(w => { ell(w, '#2a6fb5', 1.06); ell(w, '#3a8fd8'); });
+  ell(H.green, '#6fcf60', 1.28); ell(H.green, '#8fe06a');
+  H.sand.forEach(s => { ell(s, '#c9b060', 1.08); ell(s, '#ecd58a'); });
+  ctx.fillStyle = '#7ad06a'; ctx.fillRect(sx(H.tee.x - 5), sy(H.tee.y - 4), 10 * k, 8 * k);
+  H.trees.forEach(t => { ctx.fillStyle = '#14562a'; ctx.beginPath(); ctx.arc(sx(t.x), sy(t.y), t.r * k, 0, 7); ctx.fill(); ctx.fillStyle = '#1f7038'; ctx.beginPath(); ctx.arc(sx(t.x) - .6 * k, sy(t.y) - .8 * k, t.r * k * .6, 0, 7); ctx.fill(); });
+  const putting = k > 5.5;
+  if (putting) {                                                        // the slope: arrows point downhill, longer where it is steeper
+    ctx.strokeStyle = 'rgba(20,70,30,.55)'; ctx.lineWidth = 1;
+    for (let gx = -H.green.rx; gx <= H.green.rx; gx += 4.5) for (let gy = -H.green.ry; gy <= H.green.ry; gy += 4.5) { const p = { x:H.green.x + gx, y:H.green.y + gy }; if (!inEll(p, H.green, .94)) continue;
+      const L = 1.1 + H.slope.m * 2.2, ux = H.slope.x / H.slope.m, uy = H.slope.y / H.slope.m, x1 = sx(p.x + ux * L), y1 = sy(p.y + uy * L);
+      ctx.beginPath(); ctx.moveTo(sx(p.x), sy(p.y)); ctx.lineTo(x1, y1); ctx.lineTo(x1 - (ux * .7 - uy * .5) * k, y1 - (uy * .7 + ux * .5) * k); ctx.moveTo(x1, y1); ctx.lineTo(x1 - (ux * .7 + uy * .5) * k, y1 - (uy * .7 - ux * .5) * k); ctx.stroke(); }
+  }
+  // the hole and the flag
+  const hx = sx(H.pin.x), hy = sy(H.pin.y), hr = Math.max(1.5, .34 * k);
+  ctx.fillStyle = '#0c2c17'; ctx.beginPath(); ctx.arc(hx, hy, hr, 0, 7); ctx.fill();
+  const fh = putting ? 22 : 12; ctx.fillStyle = '#f4f4f4'; ctx.fillRect(Math.round(hx), Math.round(hy - fh), 1, fh); ctx.fillStyle = '#e24b3b'; ctx.fillRect(Math.round(hx) + 1, Math.round(hy - fh), putting ? 9 : 5, putting ? 6 : 4);
+  // the aim line, and where this club lands
+  if (P.mode === 'aim' || P.mode === 'bar') {
+    const d = carry(), tx = P.ball.x + Math.cos(P.aim) * d, ty = P.ball.y + Math.sin(P.aim) * d;
+    ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.setLineDash([3, 3]); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(sx(P.ball.x), sy(P.ball.y)); ctx.lineTo(sx(tx), sy(ty)); ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(sx(tx), sy(ty), Math.max(3, 4 * k), 0, 7); ctx.stroke();
+  }
+  if (P.mode === 'putt' && P.drag && P.drag.d > .3) {
+    const tx = P.ball.x + Math.cos(P.drag.dir) * P.drag.d, ty = P.ball.y + Math.sin(P.drag.dir) * P.drag.d;
+    ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(sx(P.ball.x), sy(P.ball.y)); ctx.lineTo(sx(tx), sy(ty)); ctx.stroke();
+    ctx.fillStyle = '#ffd23f'; ctx.beginPath(); ctx.arc(sx(tx), sy(ty), 2, 0, 7); ctx.fill();
+  }
+  // the ball (and its shadow while it is in the air)
+  let b = P.ball, lift = 0;
+  if (P.fly) { const f = P.fly, u = clamp(f.t / f.T, 0, 1);
+    if (u < 1) { b = { x:f.from.x + (f.land.x - f.from.x) * u, y:f.from.y + (f.land.y - f.from.y) * u }; lift = Math.sin(u * Math.PI) * f.peak; }
+    else { const r = clamp((f.t - f.T) / f.roll, 0, 1), e = 1 - (1 - r) * (1 - r); b = { x:f.land.x + (f.end.x - f.land.x) * e, y:f.land.y + (f.end.y - f.land.y) * e }; } }
+  const br = Math.max(1.5, .5 * k) + lift * .09;
+  ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.arc(sx(b.x) + lift * .25, sy(b.y) + lift * .35, Math.max(1.5, .5 * k), 0, 7); ctx.fill();
+  ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(sx(b.x), sy(b.y) - lift * k * .25, br, 0, 7); ctx.fill();
+}
+function loop(now){
+  const dt = clamp((now - lastT) / 1000, 0, .05); lastT = now;
+  if (!P) return;
+  if (P.mode === 'bar') { P.bar += dt * club().fast * LIE[P.lie].fast * (1 - .06 * (lv(club().cat) - 1)) * 2; $('#mark').style.left = (50 + tri(P.bar) * 50) + '%'; }
+  if (P.fly) { P.fly.t += dt; if (P.fly.t >= P.fly.T + P.fly.roll) landed(); }
+  if (P && P.mode === 'roll' && P.putt) { for (let i = 0; i < 4 && P.putt; i++) rollStep(dt / 4); }
+  if (!P) return;
+  if (P.sayT > 0) P.sayT -= dt;
+  if (P.msg) { banner(P.msg.text, P.msg.small); P.msg.t -= dt; if (P.msg.t <= 0) { const f = P.msg.then; P.msg = null; banner(''); if (f) { f(); if (!P) return; } } }
+  else if (P.sayT > 0 && P.say) banner(P.say); else banner('');
+  const w = wantView(); if (!P.cam) P.cam = w; else { const e = Math.min(1, dt * 5); P.cam.x += (w.x - P.cam.x) * e; P.cam.y += (w.y - P.cam.y) * e; P.cam.k += (w.k - P.cam.k) * e; }
+  draw();
+  raf = requestAnimationFrame(loop);
+}
+/* ---- touch ----
+   Aiming: drag anywhere and the aim line points at your finger. Swing starts the marker; then a tap anywhere hits.
+   Putting: press, pull back and let go. */
+const world = e => { const r = cv.getBoundingClientRect(); return { x:((e.clientX - r.left) / r.width * CW - CW / 2) / P.cam.k + P.cam.x, y:((e.clientY - r.top) / r.height * CH - CH / 2) / P.cam.k + P.cam.y }; };
+let down = null;
+$('#stage').addEventListener('pointerdown', e => {
+  if (!P || !P.cam || e.target.closest('button')) return;
+  if (P.mode === 'bar') { e.preventDefault(); return hit(tri(P.bar)); }
+  down = { x:e.clientX, y:e.clientY };
+  if (P.mode === 'aim') { const p = world(e); if (dist(p, P.ball) > 4) { P.aim = Math.atan2(p.y - P.ball.y, p.x - P.ball.x); } }
+  if (P.mode === 'putt') P.drag = { dir:0, d:0 };
+});
+addEventListener('pointermove', e => {
+  if (!P || !down) return;
+  if (P.mode === 'aim') { const p = world(e); if (dist(p, P.ball) > 4) P.aim = Math.atan2(p.y - P.ball.y, p.x - P.ball.x); }
+  if (P.mode === 'putt' && P.drag) { const dx = down.x - e.clientX, dy = down.y - e.clientY; P.drag = { dir:Math.atan2(dy, dx), d:Math.min(MAXPUTT, Math.hypot(dx, dy) * PULL) }; }
+});
+addEventListener('pointerup', () => {
+  if (!P || !down) return; down = null;
+  if (P.mode === 'putt' && P.drag) { const g = P.drag; P.drag = null; if (g.d > .3) putt(g.dir, g.d); }
+});
+$('#cPrev').addEventListener('click', () => { if (P && P.mode === 'aim') { P.club = Math.max(P.lie === 'tee' ? 0 : 1, P.club - 1); hud(); } });
+$('#cNext').addEventListener('click', () => { if (P && P.mode === 'aim') { P.club = Math.min(CLUBS.length - 1, P.club + 1); hud(); } });
+$('#swingBtn').addEventListener('click', () => { if (P && P.mode === 'aim') { P.mode = 'bar'; P.bar = rnd(0, 2); hud(); } });
+
+/* ============================ boot ============================ */
+load(); render();
+})();
+</script>
