@@ -183,7 +183,7 @@ tr.cut td{border-top:2px dashed var(--yellow)}
    back and forth across a bar. Dead centre is straight and full; off centre leaks left or right and loses distance.
    The hole is seen from above. On the green the view closes in, arrows show the slope, and you pull back and let go
    to putt (how far you pull is the pace). Prize money buys better clubs: that is the only upgrade.
-   Distances are metres. */
+   Distances are metres inside the game and shown as yards (feet for putts). */
 const $ = s => document.querySelector(s);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -192,6 +192,8 @@ const pick = a => a[Math.floor(Math.random() * a.length)];
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
 const ordinal = n => n + (['th', 'st', 'nd', 'rd'][n % 100 > 10 && n % 100 < 14 ? 0 : n % 10] || 'th');
 const money = n => '$' + Math.round(n).toLocaleString('en-US');
+// everything is worked out in metres; what you read is yards, and feet on the green (user)
+const yd = m => Math.round(m * 1.0936), ft = m => Math.max(1, Math.round(m * 3.2808));
 const toPar = d => d === 0 ? 'E' : d > 0 ? '+' + d : String(d);
 const gauss = () => { let u = 0; for (let i = 0; i < 6; i++) u += Math.random(); return (u - 3) / .7071; };   // about a standard normal
 
@@ -444,11 +446,11 @@ const club = () => CLUBS[P.club];
 const carry = () => clubDist(club()) * lieDist(club(), P.lie);
 function hud(){
   const H = P.H, d = dist(P.ball, H.pin);
-  $('#hInfo').innerHTML = `Hole ${P.hi + 1}/${P.pars.length} &middot; Par ${H.par} &middot; <b>${H.len}</b> m`;
-  $('#hScore').innerHTML = `Shot <b>${P.strokes + 1}</b> &middot; ${P.mode === 'putt' ? `<b>${d.toFixed(1)}</b> m putt` : `<b>${Math.round(d)}</b> m to pin`} &middot; <b>${toPar(P.total - P.parSum)}</b>`;
+  $('#hInfo').innerHTML = `Hole ${P.hi + 1}/${P.pars.length} &middot; Par ${H.par} &middot; <b>${yd(H.len)}</b> yd`;
+  $('#hScore').innerHTML = `Shot <b>${P.strokes + 1}</b> &middot; ${P.mode === 'putt' ? `<b>${ft(d)}</b> ft putt` : `<b>${yd(d)}</b> yd to pin`} &middot; <b>${toPar(P.total - P.parSum)}</b>`;
   const aim = P.mode === 'aim';
   $('#ctl').hidden = !aim; $('#swing').hidden = P.mode !== 'bar';
-  if (aim) { $('#cName').innerHTML = `${club().n}<b>${Math.round(carry())} m</b>`; $('#lie').textContent = LIE[P.lie].name; }
+  if (aim) { $('#cName').innerHTML = `${club().n}<b>${yd(carry())} yd</b>`; $('#lie').textContent = LIE[P.lie].name; }
   if (P.mode === 'bar') $('#sweet').style.width = (sweetOf(club()) * 100) + '%';
   $('#hint').hidden = P.mode !== 'putt'; $('#hint').textContent = 'Pull back and let go to putt';
 }
