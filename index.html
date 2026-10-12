@@ -146,6 +146,7 @@ tr.cut td{border-top:2px dashed var(--yellow)}
 .swing .sweet{position:absolute;top:0;bottom:0;left:50%;transform:translateX(-50%);background:#7dff95}
 .swing .mark{position:absolute;top:-3px;bottom:-3px;width:5px;margin-left:-2.5px;background:#fff;box-shadow:0 0 0 2px #000}
 .swing .say{text-align:center;font-family:var(--px);font-size:13px;margin-bottom:4px;text-shadow:2px 2px 0 #000;color:#4db8ff}
+.hint{position:absolute;left:0;right:0;bottom:10px;text-align:center;font-family:var(--px);font-size:13px;color:#4db8ff;text-shadow:2px 2px 0 #000;pointer-events:none}
 .banner{position:absolute;left:0;right:0;top:34%;text-align:center;font-family:var(--px);font-weight:700;font-size:26px;text-shadow:3px 3px 0 #000;pointer-events:none}
 .banner small{display:block;font-size:13px;color:var(--yellow)}
 #rotate{display:none;position:fixed;inset:0;z-index:100;background:var(--blue);align-items:center;justify-content:center;text-align:center;padding:24px}
@@ -165,6 +166,7 @@ tr.cut td{border-top:2px dashed var(--yellow)}
       <button class="btn go" id="swingBtn">Swing</button>
     </div>
     <div class="swing" id="swing" hidden><div class="say" id="swingSay">Tap anywhere</div><div class="track"><div class="sweet" id="sweet"></div><div class="mark" id="mark"></div></div></div>
+    <div class="hint" id="hint" hidden></div>
     <div class="banner" id="banner" hidden></div>
   </div>
 </div>
@@ -362,7 +364,9 @@ function genHole(par){
     const at = pointAlong(pts, clamp(rnd(150, 200), 0, 1e9)), side = pick([-1, 1]);
     H.sand.push({ x:at.x + rnd(-10, 10), y:clamp(at.y + side * (H.fw / 2 + rnd(2, 8)), 12, WH - 12), rx:rnd(7, 11), ry:rnd(5, 7) });
   }
-  for (let i = 0, n = ri(1, 3); i < n; i++) { const b = rnd(0, Math.PI * 2), d = rnd(1.25, 1.6); H.sand.push({ x:gx + Math.cos(b) * green.rx * d, y:gy + Math.sin(b) * green.ry * d, rx:rnd(5, 8), ry:rnd(4, 6) }); }
+  // bunkers round the green: clear of the putting surface, spread round it
+  for (let i = 0, n = ri(1, 3), b0 = rnd(0, Math.PI * 2); i < n; i++) { const b = b0 + i * Math.PI * 2 / n + rnd(-.5, .5), s = { rx:rnd(5, 8), ry:rnd(4, 6) }, d = 1.12 + rnd(0, .15);
+    s.x = gx + Math.cos(b) * (green.rx * d + s.rx); s.y = clamp(gy + Math.sin(b) * (green.ry * d + s.ry), 8, WH - 8); H.sand.push(s); }
   if (Math.random() < .55) {                                            // a pond: beside the fairway, or short of the green on a par 3
     const t = par === 3 ? rnd(.4, .65) : rnd(.45, .8), px = tee.x + (gx - tee.x) * t, base = par === 3 ? tee.y + (gy - tee.y) * t : pointAlong(H.path, (gx - tee.x) * t - 55).y;
     const off = par === 3 ? rnd(-10, 10) : pick([-1, 1]) * (H.fw / 2 + rnd(12, 20));
@@ -446,6 +450,7 @@ function hud(){
   $('#ctl').hidden = !aim; $('#swing').hidden = P.mode !== 'bar';
   if (aim) { $('#cName').innerHTML = `${club().n}<b>${Math.round(carry())} m</b>`; $('#lie').textContent = LIE[P.lie].name; }
   if (P.mode === 'bar') $('#sweet').style.width = (sweetOf(club()) * 100) + '%';
+  $('#hint').hidden = P.mode !== 'putt'; $('#hint').textContent = 'Pull back and let go to putt';
 }
 function banner(text, small = ''){ const b = $('#banner'); if (!text) { b.hidden = true; return; } b.hidden = false; b.innerHTML = esc(text) + (small ? `<small>${esc(small)}</small>` : ''); }
 const tri = x => { x = ((x % 2) + 2) % 2; return x < 1 ? -1 + 2 * x : 3 - 2 * x; };   // -1..1..-1, the marker's sweep
